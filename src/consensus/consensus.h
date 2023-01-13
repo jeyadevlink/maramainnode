@@ -27,4 +27,6 @@ static const size_t MIN_SERIALIZABLE_TRANSACTION_WEIGHT = WITNESS_SCALE_FACTOR *
 /** Interpret sequence numbers as relative lock-time constraints. */
 static constexpr unsigned int LOCKTIME_VERIFY_SEQUENCE = (1 << 0);
 
+static const int MAX_DEPOSIT_DESTINATION_BYTES = 70;
+
 #endif // BITCOIN_CONSENSUS_CONSENSUS_H

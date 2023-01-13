@@ -270,6 +270,34 @@ public:
         return true;
     }
 
+
+    template <typename K, typename V>
+    bool ReadSidechain(const K& key, V& value) const
+    {
+        CDataStream ssKey(SER_DISK, CLIENT_VERSION);
+        ssKey.reserve(DBWRAPPER_PREALLOC_KEY_SIZE);
+        ssKey << key;
+        leveldb::Slice slKey(&ssKey[0], ssKey.size());
+
+        std::string strValue;
+        leveldb::Status status = pdb->Get(readoptions, slKey, &strValue);
+        if (!status.ok()) {
+            if (status.IsNotFound())
+                return false;
+            LogPrintf("LevelDB read failure: %s\n", status.ToString());
+            dbwrapper_private::HandleError(status);
+        }
+        try {
+            CDataStream ssValue(strValue.data(), strValue.data() + strValue.size(), SER_DISK, CLIENT_VERSION);
+            ssValue.Xor(obfuscate_key);
+            ssValue >> value;
+        } catch (const std::exception&) {
+            return false;
+        }
+        return true;
+    }
+
+
     template <typename K, typename V>
     bool Write(const K& key, const V& value, bool fSync = false)
     {

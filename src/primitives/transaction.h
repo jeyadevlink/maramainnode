@@ -196,6 +196,48 @@ public:
 
 struct CMutableTransaction;
 
+class CCriticalData
+{
+public:
+    std::vector<unsigned char> vBytes;
+    uint256 hashCritical;
+
+    CCriticalData()
+    {
+        SetNull();
+    }
+
+    SERIALIZE_METHODS(CCriticalData, obj);
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(vBytes);
+        READWRITE(hashCritical);
+    }
+
+    void SetNull()
+    {
+        vBytes.clear();
+        hashCritical.SetNull();
+    }
+
+    bool IsNull() const
+    {
+        return (vBytes.empty() && hashCritical.IsNull());
+    }
+
+    // Check if critical data is a BMM request
+    bool IsBMMRequest() const;
+    bool IsBMMRequest(uint8_t& nSidechain, std::string& strPrevBlock) const;
+
+    friend bool operator==(const CCriticalData& a, const CCriticalData& b)
+    {
+        return (a.vBytes == b.vBytes &&
+                a.hashCritical == b.hashCritical);
+    }
+};
+
+
 /**
  * Basic transaction serialization format:
  * - int32_t nVersion
@@ -336,6 +378,10 @@ public:
 
     const uint256& GetHash() const { return hash; }
     const uint256& GetWitnessHash() const { return m_witness_hash; };
+
+    bool GetBlindHash(uint256& hashRet) const;
+
+    CAmount GetBlindValueOut() const;
 
     // Return sum of txouts.
     CAmount GetValueOut() const;

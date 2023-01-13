@@ -16,6 +16,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <sidechain.h>
 
 class CBlockFileInfo;
 class CBlockIndex;
@@ -95,6 +96,20 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 };
 
+
+/** Access to the sidechain database (blocks/sidechain/) */
+class CSidechainTreeDB : public CDBWrapper
+{
+public:
+    CSidechainTreeDB(size_t nCacheSize, bool fMemory = false, bool fWipe = false);
+    bool WriteSidechainIndex(const std::vector<std::pair<uint256, const SidechainObj *> > &list);
+    bool WriteSidechainBlockData(const std::pair<uint256, const SidechainBlockData>& data);
+
+    bool GetBlockData(const uint256& /* hashBlock */, SidechainBlockData& data) const;
+    bool HaveBlockData(const uint256& hashBlock) const;
+};
+
 std::optional<bilingual_str> CheckLegacyTxindex(CBlockTreeDB& block_tree_db);
+
 
 #endif // BITCOIN_TXDB_H

@@ -66,6 +66,13 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     pblocktree.reset();
     pblocktree.reset(new CBlockTreeDB(cache_sizes.block_tree_db, options.block_tree_db_in_memory, options.reindex));
 
+
+    auto& psidechaintree{chainman.m_blockman.m_sidechain_tree_db};
+    // new CBlockTreeDB tries to delete the existing file, which
+    // fails if it's still open from the previous loop. Close it first:
+    psidechaintree.reset();
+    psidechaintree.reset(new CSidechainTreeDB(cache_sizes.sidechain_tree_db, options.sidechain_tree_db_in_memory, options.reindex));
+
     if (options.reindex) {
         pblocktree->WriteReindexing(true);
         //If we're reindexing in prune mode, wipe away unusable block files and all undo data files

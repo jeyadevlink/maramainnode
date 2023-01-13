@@ -339,3 +339,46 @@ bool CBlockTreeDB::LoadBlockIndexGuts(const Consensus::Params& consensusParams, 
 
     return true;
 }
+
+CSidechainTreeDB::CSidechainTreeDB(size_t nCacheSize, bool fMemory, bool fWipe)
+    : CDBWrapper(gArgs.GetDataDirNet() / "blocks" / "sidechain", nCacheSize, fMemory, fWipe) { }
+
+bool CSidechainTreeDB::WriteSidechainIndex(const std::vector<std::pair<uint256, const SidechainObj *> > &list)
+{
+    CDBBatch batch(*this);
+    for (std::vector<std::pair<uint256, const SidechainObj *> >::const_iterator it=list.begin(); it!=list.end(); it++) {
+        const uint256 &objid = it->first;
+        const SidechainObj *obj = it->second;
+        std::pair<char, uint256> key = std::make_pair(obj->sidechainop, objid);
+
+        if (obj->sidechainop == DB_SIDECHAIN_BLOCK_OP) {
+            const SidechainBlockData *ptr = (const SidechainBlockData *) obj;
+            batch.Write(key, *ptr);
+        }
+    }
+
+    return WriteBatch(batch, true);
+}
+
+bool CSidechainTreeDB::WriteSidechainBlockData(const std::pair<uint256, const SidechainBlockData>& data)
+{
+    CDBBatch batch(*this);
+    std::pair<char, uint256> key = std::make_pair(data.second.sidechainop, data.first);
+    batch.Write(key, data.second);
+
+    return WriteBatch(batch, true);
+}
+
+bool CSidechainTreeDB::GetBlockData(const uint256& hashBlock, SidechainBlockData& data) const
+{
+    if (ReadSidechain(std::make_pair(DB_SIDECHAIN_BLOCK_OP, hashBlock), data))
+        return true;
+
+    return false;
+}
+
+bool CSidechainTreeDB::HaveBlockData(const uint256& hashBlock) const
+{
+    SidechainBlockData data;
+    return GetBlockData(hashBlock, data);
+}

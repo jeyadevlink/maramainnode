@@ -47,6 +47,9 @@ class Chainstate;
 class CBlockTreeDB;
 class CTxMemPool;
 class ChainstateManager;
+class SidechainDB;
+class SidechainWithdrawalState;
+class CSidechainTreeDB;
 struct ChainTxData;
 struct DisconnectedBlockTransactions;
 struct PrecomputedTransactionData;
@@ -58,6 +61,8 @@ class SnapshotMetadata;
 namespace Consensus {
 struct Params;
 } // namespace Consensus
+
+static const uint64_t SCDB_DUMP_VERSION = 1;
 
 /** Maximum number of dedicated script-checking threads allowed */
 static const int MAX_SCRIPTCHECK_THREADS = 15;
@@ -78,6 +83,8 @@ static constexpr int DEFAULT_CHECKLEVEL{3};
 // one 128MB block file + added 15% undo data = 147MB greater for a total of 545MB
 // Setting the target to >= 550 MiB will make it likely we can respect the target.
 static const uint64_t MIN_DISK_SPACE_FOR_BLOCK_FILES = 550 * 1024 * 1024;
+
+extern SidechainDB scdb;
 
 /** Current sync state passed to tip changed callbacks. */
 enum class SynchronizationState {
@@ -109,6 +116,9 @@ double GuessVerificationProgress(const ChainTxData& data, const CBlockIndex* pin
 
 /** Prune block files up to a given height */
 void PruneBlockFilesManual(Chainstate& active_chainstate, int nManualPruneHeight);
+
+
+
 
 /**
 * Validation result for a single transaction mempool acceptance.
@@ -1074,5 +1084,82 @@ bool IsBIP30Repeat(const CBlockIndex& block_index);
 
 /** Identifies blocks which coinbase output was subsequently overwritten in the UTXO set (see BIP30) */
 bool IsBIP30Unspendable(const CBlockIndex& block_index);
+
+/** Calculate amount sent into and out of Drivechain BIP 300 hashrate escrow
+ * amountSidechainIn = Value of the hashrate escrow coin being spent
+ * amountIn = Value of coins input from outside of the escrow (user input)
+ * amountSidechainOut = Value being sent (back) to the hashrate escrow
+ * amountWithdrawn = Amount subtracted from hashrate escrow by this transaction
+ */
+bool GetDrivechainAmounts(const CCoinsView& coins, const CTransaction& tx,
+                        CAmount& amountSidechainIn, CAmount& amountIn,
+                        CAmount& amountSidechainOut, CAmount& amountWithdrawn,
+                        std::string& strFail);
+
+bool IsDrivechainEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
+
+/** Produce BMM h* (or other critical data) coinbase commitment(s) for a block */
+void GenerateCriticalHashCommitments(CBlock& block);
+
+/** Produce a BMM h* coinbase commitment for a block (with lightning)*/
+void GenerateLNCriticalHashCommitment(CBlock& block);
+
+/** Produce sidechain withdrawal hash coinbase commitment for a block */
+void GenerateWithdrawalHashCommitment(CBlock& block, const uint256& hash, const uint8_t nSidechain);
+
+void GenerateSidechainProposalCommitment(CBlock& block, const Sidechain& sidechain);
+
+void GenerateSidechainActivationCommitment(CBlock& block, const uint256& hash);
+
+bool GenerateSCDBByteCommitment(CBlock& block, CScript& scriptOut, const std::vector<std::vector<SidechainWithdrawalState>>& vScores, const std::vector<std::string>& vVote);
+
+bool ResyncSCDB(const CBlockIndex* pindex);
+
+extern SidechainDB scdb;
+
+/** Load cache of user set votes for withdrawals */
+bool LoadCustomVoteCache();
+
+/** Dump cache of user set votes for withdrawals */
+void DumpCustomVoteCache();
+
+// TODO Add startup param to enable this, make disabled by default. The other
+// .dat files aren't created unless the user is BMM mining but this cache needs
+// an extra parameter in order to be made optional.
+/** Load the optional deposit cache from disk. */
+bool LoadDepositCache();
+
+/** Dump the deposit cache to disk. */
+void DumpDepositCache();
+
+/** Load the withdrawal transaction cache from disk. */
+bool LoadWithdrawalCache(bool fReindex = false);
+
+/** Dump the withdrawal cache to disk.
+ * Spent, failed & raw transaction cache */
+void DumpWithdrawalCache();
+
+/* Load sidechain proposal cache */
+bool LoadSidechainProposalCache();
+
+/* Dump sidechain proposal cache */
+void DumpSidechainProposalCache();
+
+/* Load sidechain activation hash cache */
+bool LoadSidechainActivationHashCache();
+
+/* Dump sidechain activation hash cache */
+void DumpSidechainActivationHashCache();
+
+/* Load list of failed BMM txid from cache */
+bool LoadBMMCache();
+
+/* Write list of failed BMM txid */
+void DumpBMMCache();
+
+/** Flush SCDB cache data to disk */
+void DumpSCDBCache();
+
+std::vector<CCriticalData> GetCriticalDataRequests(const CBlock& block);
 
 #endif // BITCOIN_VALIDATION_H

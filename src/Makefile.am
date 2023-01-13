@@ -234,6 +234,7 @@ BITCOIN_CORE_H = \
   rpc/blockchain.h \
   rpc/client.h \
   rpc/mempool.h \
+  rpc/sidechainrpc.h \
   rpc/mining.h \
   rpc/protocol.h \
   rpc/rawtransaction_util.h \
@@ -410,6 +411,7 @@ libbitcoin_node_a_SOURCES = \
   rpc/blockchain.cpp \
   rpc/fees.cpp \
   rpc/mempool.cpp \
+  rpc/sidechainrpc.cpp \
   rpc/mining.cpp \
   rpc/net.cpp \
   rpc/node.cpp \
@@ -431,6 +433,10 @@ libbitcoin_node_a_SOURCES = \
   validation.cpp \
   validationinterface.cpp \
   versionbits.cpp \
+  sidechain.h \
+  sidechain.cpp \
+  sidechaindb.h \
+  sidechaindb.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_WALLET

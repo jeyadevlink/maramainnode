@@ -75,6 +75,44 @@ uint256 CTransaction::ComputeHash() const
     return SerializeHash(*this, SER_GETHASH, SERIALIZE_TRANSACTION_NO_WITNESS);
 }
 
+bool CTransaction::GetBlindHash(uint256& hashRet) const
+{
+    CMutableTransaction mtx(*this);
+    if (!mtx.vin.size() || !mtx.vout.size())
+        return false;
+
+    // Remove the CTIP scriptSig (set to OP_0 as the sidechain must orignally)
+    mtx.vin.clear();
+    mtx.vin.resize(1);
+    mtx.vin[0].scriptSig = CScript() << OP_0;
+
+    // Remove the sidechain change return
+    mtx.vout.pop_back();
+
+    // We now have the blind withdrawal hash
+    hashRet = mtx.GetHash();
+
+    return true;
+}
+
+CAmount CTransaction::GetBlindValueOut() const
+{
+    CMutableTransaction mtx(*this);
+    if (!mtx.vin.size() || !mtx.vout.size())
+        return false;
+
+    // Remove the CTIP scriptSig (set to OP_0 as the sidechain must orignally)
+    mtx.vin.clear();
+    mtx.vin.resize(1);
+    mtx.vin[0].scriptSig = CScript() << OP_0;
+
+    // Remove the sidechain change return
+    mtx.vout.pop_back();
+
+    return CTransaction(mtx).GetValueOut();
+}
+
+
 uint256 CTransaction::ComputeWitnessHash() const
 {
     if (!HasWitness()) {
@@ -119,4 +157,40 @@ std::string CTransaction::ToString() const
     for (const auto& tx_out : vout)
         str += "    " + tx_out.ToString() + "\n";
     return str;
+}
+
+
+bool CCriticalData::IsBMMRequest() const
+{
+    uint8_t nSidechain;
+    std::string strPrevBytes = "";
+
+    return IsBMMRequest(nSidechain, strPrevBytes);
+}
+
+bool CCriticalData::IsBMMRequest(uint8_t& nSidechain, std::string& strPrevBlock) const
+{
+    if (IsNull())
+        return false;
+    if (hashCritical.IsNull())
+        return false;
+    if (vBytes.size() != 8)
+        return false;
+
+    if (vBytes[0] != 0x00 || vBytes[1] != 0xbf || vBytes[2] != 0x00)
+        return false;
+
+    nSidechain = vBytes[3];
+
+    // Read prev block bytes
+    std::vector<unsigned char> vPrevBytes;
+    vPrevBytes = std::vector<unsigned char>(vBytes.begin() + 4, vBytes.end());
+    if (vPrevBytes.size() != 4)
+        return false;
+
+    strPrevBlock = HexStr(vPrevBytes);
+    if (strPrevBlock.size() != 8)
+        return false;
+
+    return true;
 }

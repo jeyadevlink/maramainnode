@@ -54,6 +54,7 @@
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <protocol.h>
+#include <rpc/sidechainrpc.h>
 #include <rpc/blockchain.h>
 #include <rpc/register.h>
 #include <rpc/server.h>
@@ -92,6 +93,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "sidechain.h"
+#include "sidechaindb.h"
 
 #ifndef WIN32
 #include <cerrno>
@@ -253,6 +257,8 @@ void Shutdown(NodeContext& node)
     node.banman.reset();
     node.addrman.reset();
     node.netgroupman.reset();
+
+    DumpSCDBCache();
 
     if (node.mempool && node.mempool->GetLoadTried() && ShouldPersistMempool(*node.args)) {
         DumpMempool(*node.mempool, MempoolPath(*node.args));
@@ -1441,6 +1447,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
 
     LogPrintf("Cache configuration:\n");
     LogPrintf("* Using %.1f MiB for block index database\n", cache_sizes.block_tree_db * (1.0 / 1024 / 1024));
+    LogPrintf("* Using %.1f MiB for sidechain index database\n", cache_sizes.sidechain_tree_db * (1.0 / 1024 / 1024));
     if (args.GetBoolArg("-txindex", DEFAULT_TXINDEX)) {
         LogPrintf("* Using %.1f MiB for transaction index database\n", cache_sizes.tx_index * (1.0 / 1024 / 1024));
     }
@@ -1467,7 +1474,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         return InitError(strprintf(_("-maxmempool must be at least %d MB"), std::ceil(descendant_limit_bytes / 1'000'000.0)));
     }
     LogPrintf("* Using %.1f MiB for in-memory UTXO set (plus up to %.1f MiB of unused mempool space)\n", cache_sizes.coins * (1.0 / 1024 / 1024), mempool_opts.max_size_bytes * (1.0 / 1024 / 1024));
-
+    bool drivechainsEnabled = false;
     for (bool fLoaded = false; !fLoaded && !ShutdownRequested();) {
         node.mempool = std::make_unique<CTxMemPool>(mempool_opts);
 
@@ -1516,6 +1523,39 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             return InitError(error);
         }
 
+        CChain& active_chain = node.chainman.ActiveChain();
+        drivechainsEnabled = IsDrivechainEnabled(active_chain.Tip(), chainparams.GetConsensus());
+
+        if (drivechainsEnabled && !options.reindex && active_chain.Tip() && (active_chain.Tip()->GetBlockHash() != scdb.GetHashBlockLastSeen())){
+            if (!ResyncSCDB(active_chain.Tip())) {
+                LogPrintf("%s: Error: Failed to initialize SCDB\n", __func__);
+                scdb.Reset();
+                options.reindex = true;
+                AbortShutdown()
+                break;
+            }
+        }
+
+        if (drivechainsEnabled && !fReindex) {
+            if (!LoadDepositCache()) {
+                // Ask to reindex to fix issue loading DAT
+                bool fRet = uiInterface.ThreadSafeQuestion(
+                    strFailSCDAT,
+                    "Failed to load sidechain deposit files. Reindex?",
+                    "Failed to load sidechain deposit files. Reindex?",
+                    CClientUIInterface::MSG_ERROR | CClientUIInterface::BTN_ABORT);
+                if (fRet) {
+                    scdb.Reset();
+                    options.reindex = true;
+                    AbortShutdown()
+                    break;
+                } else {
+                    LogPrintf("Aborted reindex. Exiting.\n");
+                    return InitError("Aborted reindex. Exiting.\n");
+                }
+            }
+        }
+
         if (!fLoaded && !ShutdownRequested()) {
             // first suggest a reindex
             if (!options.reindex) {
@@ -1534,6 +1574,23 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 return InitError(error);
             }
         }
+
+        if (drivechainsEnabled) {
+            // We want to read the user's data even if reindexing - this data
+            // was created by the user and is not in any block
+            if (!LoadSidechainProposalCache() ||
+                    !LoadSidechainActivationHashCache() ||
+                    !LoadCustomVoteCache() ||
+                    !LoadBMMCache() ||
+                    !LoadWithdrawalCache(options.reindex))
+            {
+                std::string strError = "Error loading withdrawal vote & BMM settings!\n\n";
+                strError += "You may need to re-set any vote settings you have made.";
+                uiInterface.ThreadSafeMessageBox(_(strError.c_str()), "", CClientUIInterface::MSG_ERROR);
+                LogPrintf("Error reading custom vote cache.\n");
+            }
+        }
+
     }
 
     // As LoadBlockIndex can take several minutes, it's possible the user
@@ -1601,6 +1658,11 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         nLocalServices = ServiceFlags(nLocalServices | NODE_NETWORK);
     }
 
+        // Show NODE_DRIVECHAIN after fork height
+    if (drivechainsEnabled)
+        nLocalServices = ServiceFlags(nLocalServices | NODE_DRIVECHAIN);
+
+
     // ********************************************************* Step 11: import blocks
 
     if (!CheckDiskSpace(gArgs.GetDataDirNet())) {
@@ -1613,6 +1675,10 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     }
 
     int chain_active_height = WITH_LOCK(cs_main, return chainman.ActiveChain().Height());
+
+    if (fReindex) {
+        scdb.Reset();
+    }
 
     // On first startup, warn on low block storage space
     if (!fReindex && !fReindexChainState && chain_active_height <= 1) {

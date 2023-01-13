@@ -17,6 +17,8 @@ CacheSizes CalculateCacheSizes(const ArgsManager& args, size_t n_indexes)
     CacheSizes sizes;
     sizes.block_tree_db = std::min(nTotalCache / 8, nMaxBlockDBCache << 20);
     nTotalCache -= sizes.block_tree_db;
+    sizes.sidechain_tree_db = std::min(nTotalCache / 8, nMaxBlockDBCache << 20);
+    nTotalCache -= sizes.sidechain_tree_db;
     sizes.tx_index = std::min(nTotalCache / 8, args.GetBoolArg("-txindex", DEFAULT_TXINDEX) ? nMaxTxIndexCache << 20 : 0);
     nTotalCache -= sizes.tx_index;
     sizes.filter_index = 0;
@@ -28,6 +30,11 @@ CacheSizes CalculateCacheSizes(const ArgsManager& args, size_t n_indexes)
     sizes.coins_db = std::min(nTotalCache / 2, (nTotalCache / 4) + (1 << 23)); // use 25%-50% of the remainder for disk cache
     sizes.coins_db = std::min(sizes.coins_db, nMaxCoinsDBCache << 20); // cap total coins db cache
     nTotalCache -= sizes.coins_db;
+
+    sizes.nSidechainTreeDBCache = std::min(nTotalCache / 2, (nTotalCache / 4) + (1 << 23)); // use 25%-50% of the remainder for disk cache
+    sizes.nSidechainTreeDBCache = std::min(sizes.nSidechainTreeDBCache, nMaxCoinsDBCache << 20); // cap total coins db cache
+    nTotalCache -= sizes.nSidechainTreeDBCache;
+
     sizes.coins = nTotalCache; // the rest goes to in-memory cache
     return sizes;
 }

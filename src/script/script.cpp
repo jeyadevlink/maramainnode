@@ -9,6 +9,8 @@
 
 #include <string>
 
+#include <uint256.h>
+
 std::string GetOpName(opcodetype opcode)
 {
     switch (opcode)
@@ -133,7 +135,7 @@ std::string GetOpName(opcodetype opcode)
     case OP_CHECKLOCKTIMEVERIFY    : return "OP_CHECKLOCKTIMEVERIFY";
     case OP_CHECKSEQUENCEVERIFY    : return "OP_CHECKSEQUENCEVERIFY";
     case OP_NOP4                   : return "OP_NOP4";
-    case OP_NOP5                   : return "OP_NOP5";
+    case OP_DRIVECHAIN             : return "OP_DRIVECHAIN";
     case OP_NOP6                   : return "OP_NOP6";
     case OP_NOP7                   : return "OP_NOP7";
     case OP_NOP8                   : return "OP_NOP8";
@@ -362,5 +364,134 @@ bool CheckMinimalPush(const std::vector<unsigned char>& data, opcodetype opcode)
         // Must have used OP_PUSHDATA2.
         return opcode == OP_PUSHDATA2;
     }
+    return true;
+}
+
+bool CScript::IsDrivechain(uint8_t& nSidechain) const
+{
+    if (this->size() != 2)
+        return false;
+
+    if ((*this)[0] != OP_DRIVECHAIN)
+        return false;
+
+    nSidechain = (*this)[1];
+
+    return true;
+}
+
+
+bool CScript::IsCriticalHashCommit(uint256& hash, std::vector<unsigned char>& vBytes) const
+{
+    // Check script size
+    size_t size = this->size();
+    if (size < 37) // sha256 hash + optional data / flag bytes + opcodes
+        return false;
+
+    // Check script header
+    if ((*this)[0] != OP_RETURN ||
+            (*this)[1] != 0xD1 ||
+            (*this)[2] != 0x61 ||
+            (*this)[3] != 0x73 ||
+            (*this)[4] != 0x68)
+        return false;
+
+    hash = uint256(std::vector<unsigned char>(this->begin() + 5, this->begin() + 37));
+
+    if (hash.IsNull())
+        return false;
+
+    if (size > 37)
+        vBytes = std::vector<unsigned char>(this->begin() + 37, this->end());
+
+    return true;
+}
+
+
+bool CScript::IsWithdrawalHashCommit(uint256& hash, uint8_t& nSidechain) const
+{
+    // Check script size
+    size_t size = this->size();
+    if (size != 38) // sha256 hash + nSidechain + opcodes
+        return false;
+
+    // Check script header
+    if ((*this)[0] != OP_RETURN ||
+            (*this)[1] != 0xD4 ||
+            (*this)[2] != 0x5A ||
+            (*this)[3] != 0xA9 ||
+            (*this)[4] != 0x43)
+        return false;
+
+    hash = uint256(std::vector<unsigned char>(this->begin() + 5, this->begin() + 37));
+    nSidechain = (*this)[37];
+
+    if (hash.IsNull())
+        return false;
+
+    return true;
+}
+
+bool CScript::IsSidechainProposalCommit() const
+{
+    // Check script size
+    // TODO should we have a max size? Probably not.
+    size_t size = this->size();
+    if (size < 10) // TODO put in exact minimum size of SidechainProposal serialization
+        return false;
+
+    // Check script header
+    if ((*this)[0] != OP_RETURN ||
+            (*this)[1] != 0xD5 ||
+            (*this)[2] != 0xE0 ||
+            (*this)[3] != 0xC4 ||
+            (*this)[4] != 0xAF)
+        return false;
+
+    // TODO deserialize sidechain
+    // TODO check validity of sidechain
+
+    return true;
+}
+
+
+bool CScript::IsSidechainActivationCommit(uint256& hashSidechain) const
+{
+    // Check script size
+    size_t size = this->size();
+    if (size < 37)
+        return false;
+
+    // Check script header
+    if ((*this)[0] != OP_RETURN ||
+            (*this)[1] != 0xD6 ||
+            (*this)[2] != 0xE1 ||
+            (*this)[3] != 0xC5 ||
+            (*this)[4] != 0xBF)
+        return false;
+
+    hashSidechain = uint256(std::vector<unsigned char>(this->begin() + 5, this->begin() + 37));
+    if (hashSidechain.IsNull())
+        return false;
+
+    return true;
+}
+
+
+bool CScript::IsSCDBBytes() const
+{
+    // Check script size
+    size_t size = this->size();
+    if (size < 6)
+        return false;
+
+    // Check script header
+    if ((*this)[0] != OP_RETURN ||
+            (*this)[1] != 0xD7 ||
+            (*this)[2] != 0x7D ||
+            (*this)[3] != 0x17 ||
+            (*this)[4] != 0x76)
+        return false;
+
     return true;
 }

@@ -14,6 +14,7 @@
 #include <rpc/client.h>
 #include <rpc/request.h>
 #include <rpc/server.h>
+#include <rpc/sidechainrpc.h>
 #include <rpc/util.h>
 #include <span.h>
 #include <streams.h>
@@ -172,6 +173,8 @@ const std::vector<std::string> RPC_COMMANDS_SAFE_FOR_FUZZING{
     "waitforblock",
     "waitforblockheight",
     "waitfornewblock",
+    "createsidechainproposal",
+    "listsidechainproposals",
 };
 
 std::string ConsumeScalarRPCArgument(FuzzedDataProvider& fuzzed_data_provider)
