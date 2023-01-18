@@ -276,8 +276,8 @@ public:
     {
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
         ssKey.reserve(DBWRAPPER_PREALLOC_KEY_SIZE);
-        ssKey << key;
-        leveldb::Slice slKey(&ssKey[0], ssKey.size());
+       // ssKey << key;
+        leveldb::Slice slKey((const char*)ssKey.data(), ssKey.size());
 
         std::string strValue;
         leveldb::Status status = pdb->Get(readoptions, slKey, &strValue);
@@ -288,7 +288,7 @@ public:
             dbwrapper_private::HandleError(status);
         }
         try {
-            CDataStream ssValue(strValue.data(), strValue.data() + strValue.size(), SER_DISK, CLIENT_VERSION);
+            CDataStream ssValue{MakeByteSpan(strValue), SER_DISK, CLIENT_VERSION};
             ssValue.Xor(obfuscate_key);
             ssValue >> value;
         } catch (const std::exception&) {

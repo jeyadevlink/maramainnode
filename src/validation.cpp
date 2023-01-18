@@ -5650,7 +5650,7 @@ bool ResyncSCDB(const CBlockIndex* pindex)
 
 bool LoadCustomVoteCache()
 {
-    fs::path path = GetDataDir() / "drivechain" / "customvotes.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "customvotes.dat";
     CAutoFile filein(fsbridge::fopen(path, "rb"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -5696,7 +5696,7 @@ void DumpCustomVoteCache()
     int count = vVote.size();
 
     // Write the votes
-    fs::path path = GetDataDir() / "drivechain" / "customvotes.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "customvotes.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "wb"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -5717,14 +5717,14 @@ void DumpCustomVoteCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "customvotes.dat.new", GetDataDir() /  "drivechain" / "customvotes.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "customvotes.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "customvotes.dat");
 
     LogPrintf("%s: Wrote %u\n", __func__, count);
 }
 
 bool LoadDepositCache()
 {
-    fs::path path = GetDataDir() / "drivechain" / "deposit.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "deposit.dat";
     CAutoFile filein(fsbridge::fopen(path, "rb"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -5771,7 +5771,7 @@ void DumpDepositCache()
 
 
     // Write the deposits
-    fs::path path = GetDataDir() / "drivechain" / "deposit.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "deposit.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "wb"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -5793,14 +5793,14 @@ void DumpDepositCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "deposit.dat.new", GetDataDir() /  "drivechain" / "deposit.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "deposit.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "deposit.dat");
 
     LogPrintf("%s: Wrote %u\n", __func__, count);
 }
 
 bool LoadWithdrawalCache(bool fReindex)
 {
-    fs::path path = GetDataDir() / "drivechain" / "withdrawal.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "withdrawal.dat";
     CAutoFile filein(fsbridge::fopen(path, "rb"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -5875,7 +5875,7 @@ void DumpWithdrawalCache()
     int nFailed = vFailed.size();
 
     // Write the Withdrawal raw tx cache & spent Withdrawal cache
-    fs::path path = GetDataDir() / "drivechain" / "withdrawal.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "withdrawal.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "wb"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -5907,14 +5907,14 @@ void DumpWithdrawalCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "withdrawal.dat.new", GetDataDir() /  "drivechain" / "withdrawal.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "withdrawal.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "withdrawal.dat");
 
     LogPrintf("%s: Wrote %u Withdrawal, %u spent, %u failed\n", __func__, nWithdrawal, nSpent, nFailed);
 }
 
 bool LoadBMMCache()
 {
-    fs::path path = GetDataDir() / "drivechain" / "bmm.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "bmm.dat";
     CAutoFile filein(fsbridge::fopen(path, "r"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -5955,7 +5955,7 @@ void DumpBMMCache()
     int count = setRemovedBMM.size();
 
     // Write the sidechain activation status cache
-    fs::path path = GetDataDir() / "drivechain" / "bmm.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "bmm.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "w"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -5975,14 +5975,14 @@ void DumpBMMCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "bmm.dat.new", GetDataDir() /  "drivechain" / "bmm.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "bmm.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "bmm.dat");
 
     LogPrintf("%s: Wrote %u\n", __func__, count);
 }
 
 bool LoadSidechainProposalCache()
 {
-    fs::path path = GetDataDir() / "drivechain" / "sidechainproposals.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "sidechainproposals.dat";
     CAutoFile filein(fsbridge::fopen(path, "r"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -6022,7 +6022,7 @@ void DumpSidechainProposalCache()
     int count = vProposal.size();
 
     // Write the sidechain proposal cache
-    fs::path path = GetDataDir() / "drivechain" / "sidechainproposals.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "sidechainproposals.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "w"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -6042,14 +6042,14 @@ void DumpSidechainProposalCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "sidechainproposals.dat.new", GetDataDir() /  "drivechain" / "sidechainproposals.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "sidechainproposals.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "sidechainproposals.dat");
 
     LogPrintf("%s: Wrote %u\n", __func__, count);
 }
 
 bool LoadSidechainActivationHashCache()
 {
-    fs::path path = GetDataDir() / "drivechain" / "sidechainhashactivate.dat";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "sidechainhashactivate.dat";
     CAutoFile filein(fsbridge::fopen(path, "r"), SER_DISK, CLIENT_VERSION);
     if (filein.IsNull()) {
         return true;
@@ -6090,7 +6090,7 @@ void DumpSidechainActivationHashCache()
     int count = vHash.size();
 
     // Write the sidechain activation hash cache
-    fs::path path = GetDataDir() / "drivechain" / "sidechainhashactivate.dat.new";
+    fs::path path = gArgs.GetDataDirNet() / "drivechain" / "sidechainhashactivate.dat.new";
     CAutoFile fileout(fsbridge::fopen(path, "w"), SER_DISK, CLIENT_VERSION);
     if (fileout.IsNull()) {
         return;
@@ -6110,7 +6110,7 @@ void DumpSidechainActivationHashCache()
 
     FileCommit(fileout.Get());
     fileout.fclose();
-    RenameOver(GetDataDir() / "drivechain" / "sidechainhashactivate.dat.new", GetDataDir() /  "drivechain" / "sidechainhashactivate.dat");
+    RenameOver(gArgs.GetDataDirNet() / "drivechain" / "sidechainhashactivate.dat.new", gArgs.GetDataDirNet() /  "drivechain" / "sidechainhashactivate.dat");
 
     LogPrintf("%s: Wrote %u\n", __func__, count);
 }
@@ -6119,7 +6119,7 @@ void DumpSCDBCache()
 {
     // TODO make configurable
     // Create ~/.drivechain/drivechain
-    TryCreateDirectories(GetDataDir() / "drivechain");
+    TryCreateDirectories(gArgs.GetDataDirNet() / "drivechain");
     // Dump SidechainDB, sidechain activation & optional caches
     DumpDepositCache();
     DumpCustomVoteCache();

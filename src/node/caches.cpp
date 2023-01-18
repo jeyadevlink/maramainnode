@@ -31,9 +31,9 @@ CacheSizes CalculateCacheSizes(const ArgsManager& args, size_t n_indexes)
     sizes.coins_db = std::min(sizes.coins_db, nMaxCoinsDBCache << 20); // cap total coins db cache
     nTotalCache -= sizes.coins_db;
 
-    sizes.nSidechainTreeDBCache = std::min(nTotalCache / 2, (nTotalCache / 4) + (1 << 23)); // use 25%-50% of the remainder for disk cache
-    sizes.nSidechainTreeDBCache = std::min(sizes.nSidechainTreeDBCache, nMaxCoinsDBCache << 20); // cap total coins db cache
-    nTotalCache -= sizes.nSidechainTreeDBCache;
+    sizes.sidechain_tree_db = std::min(nTotalCache / 2, (nTotalCache / 4) + (1 << 23)); // use 25%-50% of the remainder for disk cache
+    sizes.sidechain_tree_db = std::min(sizes.sidechain_tree_db, nMaxCoinsDBCache << 20); // cap total coins db cache
+    nTotalCache -= sizes.sidechain_tree_db;
 
     sizes.coins = nTotalCache; // the rest goes to in-memory cache
     return sizes;

@@ -1460,6 +1460,12 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
     assert(!node.mempool);
     assert(!node.chainman);
 
+    std::string strFailSCDAT;
+    strFailSCDAT = "Failed to load sidechain database files!\n";
+    strFailSCDAT += "They may corrupt or need to be updated.\n";
+    strFailSCDAT += "\n";
+    strFailSCDAT += "Reindex now to fix errors?\n";
+
     CTxMemPool::Options mempool_opts{
         .estimator = node.fee_estimator.get(),
         .check_ratio = chainparams.DefaultConsistencyChecks() ? 1 : 0,
@@ -1523,7 +1529,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             return InitError(error);
         }
 
-        CChain& active_chain = node.chainman.ActiveChain();
+        CChain& active_chain = chainman.ActiveChain();
         drivechainsEnabled = IsDrivechainEnabled(active_chain.Tip(), chainparams.GetConsensus());
 
         if (drivechainsEnabled && !options.reindex && active_chain.Tip() && (active_chain.Tip()->GetBlockHash() != scdb.GetHashBlockLastSeen())){
@@ -1531,7 +1537,7 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                 LogPrintf("%s: Error: Failed to initialize SCDB\n", __func__);
                 scdb.Reset();
                 options.reindex = true;
-                AbortShutdown()
+                AbortShutdown();
                 break;
             }
         }
@@ -1540,18 +1546,18 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             if (!LoadDepositCache()) {
                 // Ask to reindex to fix issue loading DAT
                 bool fRet = uiInterface.ThreadSafeQuestion(
-                    strFailSCDAT,
+                     Untranslated(strFailSCDAT),
                     "Failed to load sidechain deposit files. Reindex?",
                     "Failed to load sidechain deposit files. Reindex?",
                     CClientUIInterface::MSG_ERROR | CClientUIInterface::BTN_ABORT);
                 if (fRet) {
                     scdb.Reset();
                     options.reindex = true;
-                    AbortShutdown()
+                    AbortShutdown();
                     break;
                 } else {
                     LogPrintf("Aborted reindex. Exiting.\n");
-                    return InitError("Aborted reindex. Exiting.\n");
+                    return InitError(_("Aborted reindex. Exiting.\n"));
                 }
             }
         }

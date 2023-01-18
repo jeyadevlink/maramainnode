@@ -30,6 +30,7 @@
 #include <util/epochguard.h>
 #include <util/hasher.h>
 #include <util/result.h>
+#include <sidechain.h>
 
 #include <boost/multi_index/hashed_index.hpp>
 #include <boost/multi_index/ordered_index.hpp>
@@ -341,6 +342,9 @@ protected:
 
 public:
 
+    std::map<uint8_t, SidechainCTIP> mapLastSidechainDeposit;
+    std::map<uint8_t, uint256> mapActiveSidechain;
+
     static const int ROLLING_FEE_HALFLIFE = 60 * 60 * 12; // public only for testing
 
     typedef boost::multi_index_container<
@@ -413,6 +417,22 @@ public:
     using Limits = kernel::MemPoolLimits;
 
     uint64_t CalculateDescendantMaximum(txiter entry) const EXCLUSIVE_LOCKS_REQUIRED(cs);
+
+    void RemoveExpiredCriticalRequests(std::vector<uint256>& vHashRemoved);
+
+    void SelectBMMRequests(std::vector<uint256>& vHashRemoved);
+
+    void UpdateCTIPFromMempool(const std::map<uint8_t, SidechainCTIP>& mapCTIP);
+
+    void UpdateCTIPFromBlock(const std::map<uint8_t, SidechainCTIP>& mapCTIP, bool fDisconnect);
+
+    bool GetMemPoolCTIP(uint8_t nSidechain, SidechainCTIP& ctip) const;
+
+    void RemoveSidechainDeposits(uint8_t nSidechain, const setEntries& setKeep);
+
+    void RemoveUnsortedSidechainDeposits(const std::map<uint8_t, SidechainCTIP>& mapCTIP, uint8_t nSidechain);
+
+
 private:
     typedef std::map<txiter, setEntries, CompareIteratorByHash> cacheMap;
 

@@ -92,7 +92,8 @@
         "netfwd": "cpp",
         "utility": "cpp",
         "stop_token": "cpp",
-        "cinttypes": "cpp"
+        "cinttypes": "cpp",
+        "filesystem": "cpp"
     },
     "cmake.sourceDirectory": "${workspaceFolder}/src/crc32c"
 }
