@@ -84,6 +84,12 @@ private:
     CAmount m_modified_fee;         //!< Used for determining the priority of the transaction for mining in a block
     LockPoints lockPoints;          //!< Track the height and time at which tx was final
 
+
+    // Sidechain deposit info
+    bool fSidechainDeposit;
+    uint8_t nSidechain;
+
+
     // Information about descendants of this transaction that are in the
     // mempool; if we remove this transaction we must remove all of these
     // descendants as well.
@@ -101,6 +107,8 @@ public:
     CTxMemPoolEntry(const CTransactionRef& tx, CAmount fee,
                     int64_t time, unsigned int entry_height,
                     bool spends_coinbase,
+                    bool _fSidechainDeposit,
+                    uint8_t _nSidechain,
                     int64_t sigops_cost, LockPoints lp)
         : tx{tx},
           nFee{fee},
@@ -116,6 +124,8 @@ public:
           nModFeesWithDescendants{nFee},
           nSizeWithAncestors{GetTxSize()},
           nModFeesWithAncestors{nFee},
+          fSidechainDeposit(_fSidechainDeposit), 
+          nSidechain(_nSidechain),
           nSigOpCostWithAncestors{sigOpCost} {}
 
     const CTransaction& GetTx() const { return *this->tx; }
@@ -156,6 +166,10 @@ public:
     CAmount GetModFeesWithDescendants() const { return nModFeesWithDescendants; }
 
     bool GetSpendsCoinbase() const { return spendsCoinbase; }
+
+    bool HasCriticalData() const { return !this->tx->criticalData.IsNull(); }
+    bool IsSidechainDeposit() const { return fSidechainDeposit; }
+    uint8_t GetSidechainNumber() const { return nSidechain; }
 
     uint64_t GetCountWithAncestors() const { return nCountWithAncestors; }
     uint64_t GetSizeWithAncestors() const { return nSizeWithAncestors; }

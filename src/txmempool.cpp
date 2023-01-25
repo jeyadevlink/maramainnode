@@ -22,7 +22,7 @@
 #include <util/time.h>
 #include <util/translation.h>
 #include <validationinterface.h>
-
+#include <validation.h>
 #include <cmath>
 #include <optional>
 #include <string_view>
@@ -1149,7 +1149,7 @@ void CTxMemPool::RemoveExpiredCriticalRequests(std::vector<uint256>& vHashRemove
     std::vector<CTransaction> vTxRemove;
     for (indexed_transaction_set::const_iterator it = mapTx.begin(); it != mapTx.end(); it++) {
         if (!it->GetTx().criticalData.IsNull()) {
-            if (node.chainman.ActiveChain().Height() + 1 != (int64_t)it->GetTx().nLockTime + 1) {
+            if (chainActive.Height() + 1 != (int64_t)it->GetTx().nLockTime + 1) {
                 vHashRemoved.push_back(it->GetTx().GetHash());
                 vTxRemove.push_back(it->GetTx());
             }
@@ -1158,7 +1158,7 @@ void CTxMemPool::RemoveExpiredCriticalRequests(std::vector<uint256>& vHashRemove
 
     for (const CTransaction& tx : vTxRemove) {
         vHashRemoved.push_back(tx.GetHash());
-        removeRecursive(tx);
+        removeRecursive(tx, MemPoolRemovalReason::SIZELIMIT);
     }
 }
 
@@ -1211,7 +1211,7 @@ void CTxMemPool::SelectBMMRequests(std::vector<uint256>& vHashRemoved)
 
     for (const CTransaction& tx : vTxRemove) {
         vHashRemoved.push_back(tx.GetHash());
-        removeRecursive(tx);
+        removeRecursive(tx, MemPoolRemovalReason::SIZELIMIT);
     }
 }
 
@@ -1289,9 +1289,7 @@ void CTxMemPool::UpdateCTIPFromBlock(const std::map<uint8_t, SidechainCTIP>& map
 
             const txiter cit = mapTx.find(it->second.out.hash);
             if (cit != mapTx.end()) {
-                CalculateMemPoolAncestors(*cit, ancestors, nNoLimit, nNoLimit,
-                        nNoLimit, nNoLimit, strError);
-
+                CalculateMemPoolAncestors(*cit, Limits::NoLimits(), true);
                 if (ancestors.count(cit) == 0)
                     ancestors.insert(cit);
             }
@@ -1352,7 +1350,7 @@ void CTxMemPool::RemoveSidechainDeposits(uint8_t nSidechain, const setEntries& s
 
     for (const CTransaction& tx : vTxRemove) {
         scdb.AddRemovedDeposit(tx.GetHash());
-        removeRecursive(tx);
+        removeRecursive(tx, MemPoolRemovalReason::SIZELIMIT);
     }
 }
 

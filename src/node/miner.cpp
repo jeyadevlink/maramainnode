@@ -105,6 +105,12 @@ void BlockAssembler::resetBlock()
 
 std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& scriptPubKeyIn)
 {
+    bool fAddedBMM = false;
+    return CreateNewBlock(scriptPubKeyIn, fAddedBMM);
+}
+
+std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& scriptPubKeyIn, , bool& fAddedBMM)
+{
     const auto time_start{SteadyClock::now()};
 
     resetBlock();
@@ -136,8 +142,58 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblock->nTime = TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime());
     m_lock_time_cutoff = pindexPrev->GetMedianTimePast();
 
+    bool fDrivechainEnabled = IsDrivechainEnabled(pindexPrev, chainparams.GetConsensus());
+#ifdef ENABLE_WALLET
+    if (fDrivechainEnabled) {
+        // Make sure that the mempool has only valid deposits to choose from
+        m_mempool.UpdateCTIPFromBlock(scdb.GetCTIP(), false /* fDisconnect */);
+
+        // Remove expired BMM requests from our memory pool
+        std::vector<uint256> vHashRemoved;
+        m_mempool.RemoveExpiredCriticalRequests(vHashRemoved);
+        // Select which BMM requests (if any) to include
+        m_mempool.SelectBMMRequests(vHashRemoved);
+
+        // Track what was removed from the mempool so that we can abandon later
+        for (const uint256& u : vHashRemoved)
+            scdb.AddRemovedBMM(u);
+    }
+#endif
+
+    // Collect active sidechains
+    std::vector<Sidechain> vActiveSidechain;
+    if (fDrivechainEnabled)
+        vActiveSidechain = scdb.GetActiveSidechains();
+
+    // Generate payout transactions for any approved withdrawals
+    //
+    // Keep track of which sidechains will have a Withdrawal in this block. We will
+    // need this when deciding what transactions to add from the mempool.
+    std::set<uint8_t> setSidechainsWithWithdrawal;
+    // Keep track of the created Withdrawal(s) to be added to the block later
+    std::vector<CMutableTransaction> vWithdrawal;
+    // Keep track of mainchain fees
+    CAmount nWithdrawalFees = 0;
+    if (fDrivechainEnabled) {
+        for (const Sidechain& s : vActiveSidechain) {
+            CMutableTransaction wtx;
+            CAmount nFee = 0;
+            bool fCreated = CreateWithdrawalPayout(s.nSidechain, wtx, nFee);
+            if (fCreated && wtx.vout.size() && wtx.vin.size()) {
+                LogPrintf("%s: Created Withdrawal payout for sidechain: %u with: %u outputs!\ntxid: %s.\n",
+                        __func__, s.nSidechain, wtx.vout.size(), wtx.GetHash().ToString());
+                vWithdrawal.push_back(wtx);
+                setSidechainsWithWithdrawal.insert(s.nSidechain);
+
+                nWithdrawalFees += nFee;
+            }
+        }
+    }
+
+
     int nPackagesSelected = 0;
     int nDescendantsUpdated = 0;
+    bool fNeedCriticalFeeTx = false;
     if (m_mempool) {
         LOCK(m_mempool->cs);
         addPackageTxs(*m_mempool, nPackagesSelected, nDescendantsUpdated);
@@ -157,6 +213,160 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     coinbaseTx.vout[0].nValue = nFees + GetBlockSubsidy(nHeight, chainparams.GetConsensus());
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
     pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
+
+
+    // Commit new withdrawals which we have received locally
+    std::map<uint8_t /* nSidechain */, uint256 /* hash withdrawal */> mapNewWithdrawal;
+    for (const Sidechain& s : vActiveSidechain) {
+        std::vector<uint256> vHash = scdb.GetUncommittedWithdrawalCache(s.nSidechain);
+
+        if (vHash.empty())
+            continue;
+
+        const uint256& hash = vHash.back();
+
+        // Make sure that the Withdrawal hasn't previously been spent or failed.
+        if (scdb.HaveFailedWithdrawal(hash, s.nSidechain))
+            continue;
+        if (scdb.HaveSpentWithdrawal(hash, s.nSidechain))
+            continue;
+
+        // For now, if there are fresh (uncommitted, unknown to SCDB) Withdrawal(s)
+        // we will commit the most recent in the block we are generating.
+        GenerateWithdrawalHashCommitment(*pblock, hash, s.nSidechain);
+
+        // Keep track of new Withdrawal(s) by nSidechain for later
+        mapNewWithdrawal[s.nSidechain] = hash;
+
+        LogPrintf("%s: Miner found new withdrawal: %u : %s at height %u.\n", __func__, s.nSidechain, hash.ToString(), nHeight);
+    }
+
+
+    if (fDrivechainEnabled && scdb.HasState()) {
+        // Get withdrawal vote settings
+        std::vector<std::string> vVote = scdb.GetVotes();
+
+        std::vector<std::vector<SidechainWithdrawalState>> vOldScores;
+        for (const Sidechain& s : vActiveSidechain) {
+            std::vector<SidechainWithdrawalState> vWithdrawal = scdb.GetState(s.nSidechain);
+            if (vWithdrawal.size())
+                vOldScores.push_back(vWithdrawal);
+        }
+
+        LogPrintf("%s: Miner generating scdb bytes at height %u.\n", __func__, nHeight);
+        CScript script;
+        if (!GenerateSCDBByteCommitment(*pblock, script, vOldScores, vVote)) {
+            LogPrintf("%s: Miner failed to generate scdb bytes at height %u.\n", __func__, nHeight);
+            throw std::runtime_error(strprintf("%s: Miner failed to generate scdb bytes at height %u.\n",
+                                               __func__, nHeight));
+        }
+
+        // Make sure that we can read the update bytes
+        std::vector<std::string> vVoteParsed;
+        if (!ParseSCDBBytes(script, vOldScores, vVoteParsed)) {
+            LogPrintf("%s: Miner failed to parse its own scdb bytes at height %u.\n", __func__, nHeight);
+            throw std::runtime_error(strprintf("%s: Miner failed to parse its own update bytes at height %u.\n",
+                                               __func__, nHeight));
+        }
+    }
+
+    if (fDrivechainEnabled) {
+        // Generate critical hash commitments (usually for BMM commitments)
+        GenerateCriticalHashCommitments(*pblock);
+
+        // Scan through our sidechain proposals and commit the first one we find
+        // that hasn't already been committed and is tracked by SCDB.
+        //
+        // If we commit a proposal, save the hash to easily ACK it later
+        uint256 hashProposal;
+        std::vector<Sidechain> vProposal = scdb.GetSidechainProposals();
+        if (!vProposal.empty()) {
+            std::vector<SidechainActivationStatus> vActivation = scdb.GetSidechainActivationStatus();
+            for (const Sidechain& p : vProposal) {
+                // Check if this proposal is unique
+                bool fFound = false;
+                for (const SidechainActivationStatus& s : vActivation) {
+                    if (s.proposal == p) {
+                        fFound = true;
+                        break;
+                    }
+                }
+                if (fFound)
+                    continue;
+
+                GenerateSidechainProposalCommitment(*pblock, p);
+                hashProposal = p.GetSerHash();
+                LogPrintf("%s: Generated sidechain proposal commitment for:\n%s\n", __func__, p.ToString());
+                break;
+            }
+        }
+
+        // TODO rename param to make function more clear
+        // If this is set activate any sidechain which has been proposed.
+        bool fAnySidechain = gArgs.GetBoolArg("-activatesidechains", false);
+
+        // Commit sidechain activation for proposals in activation status cache
+        // which we have configured to ACK
+        std::vector<SidechainActivationStatus> vActivationStatus;
+        vActivationStatus = scdb.GetSidechainActivationStatus();
+        std::map<uint8_t, bool> mapCommit;
+        for (const SidechainActivationStatus& s : vActivationStatus) {
+            if (fAnySidechain || scdb.GetAckSidechain(s.proposal.GetSerHash())) {
+                // Don't generate more than one commit for the same SC #
+                if (mapCommit.find(s.proposal.nSidechain) == mapCommit.end()) {
+                    GenerateSidechainActivationCommitment(*pblock, s.proposal.GetSerHash());
+                    mapCommit[s.proposal.nSidechain] = true;
+                }
+            }
+        }
+    }
+
+    for (const CMutableTransaction& mtx : vWithdrawal) {
+        pblock->vtx.push_back(MakeTransactionRef(std::move(mtx)));
+    }
+
+
+    // Handle / create critical fee tx (collects bmm / critical data fees)
+    if (fDrivechainEnabled && fNeedCriticalFeeTx) {
+        fAddedBMM = true;
+        // Create critical fee tx
+        CMutableTransaction feeTx;
+        feeTx.vout.resize(1);
+        // Pay the fees to the same script as the coinbase
+        feeTx.vout[0].scriptPubKey = scriptPubKeyIn;
+        feeTx.vout[0].nValue = CAmount(0);
+
+        // Find all of the critical data transactions included in the block
+        // and take their input and total amount
+        for (const CTransactionRef& tx : pblock->vtx) {
+            if (tx && !tx->criticalData.IsNull()) {
+                // Try to find the critical data fee output and take it
+                for (uint32_t i = 0; i < tx->vout.size(); i++) {
+                    if (tx->vout[i].scriptPubKey == CScript() << OP_TRUE) {
+                        feeTx.vin.push_back(CTxIn(tx->GetHash(), i));
+                        feeTx.vout[0].nValue += tx->vout[i].nValue;
+                    }
+                }
+            }
+        }
+
+        // TODO calculate the fee tx as part of the block's txn package so that
+        // we always make room for it.
+        //
+        // Add the fee tx to the block if we can
+        if (CTransaction(feeTx).GetValueOut()) {
+            // Check if block weight after adding transaction would be too large
+            if ((nBlockWeight + GetTransactionWeight(feeTx)) < MAX_BLOCK_WEIGHT) {
+                pblock->vtx.push_back(MakeTransactionRef(std::move(feeTx)));
+                pblocktemplate->vTxSigOpsCost.push_back(WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx.back()));
+                pblocktemplate->vTxFees.push_back(0);
+            } else {
+                LogPrintf("%s: Miner could not add BMM fee tx, block size > MAX_BLOCK_WEIGHT ", __func__);
+            }
+        }
+    }
+
+
     pblocktemplate->vchCoinbaseCommitment = m_chainstate.m_chainman.GenerateCoinbaseCommitment(*pblock, pindexPrev);
     pblocktemplate->vTxFees[0] = -nFees;
 
@@ -182,6 +392,127 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
 
     return std::move(pblocktemplate);
 }
+
+
+bool BlockAssembler::CreateWithdrawalPayout(uint8_t nSidechain, CMutableTransaction& tx, CAmount& nFees)
+{
+    // TODO log all false returns
+
+    // The Withdrawal that will be created
+    CMutableTransaction mtx;
+    mtx.nVersion = 2;
+
+    if (!IsDrivechainEnabled(chainActive.Tip(), chainparams.GetConsensus()))
+        return false;
+
+#ifdef ENABLE_WALLET
+    if (!scdb.HasState())
+        return false;
+    if (!scdb.IsSidechainActive(nSidechain))
+        return false;
+
+    Sidechain sidechain;
+    if (!scdb.GetSidechain(nSidechain, sidechain))
+        return false;
+
+    // Select the highest scoring withdrawal for sidechain
+    uint256 hashBest = uint256();
+    uint16_t scoreBest = 0;
+    std::vector<SidechainWithdrawalState> vState = scdb.GetState(nSidechain);
+    for (const SidechainWithdrawalState& state : vState) {
+        if (state.nWorkScore > scoreBest || scoreBest == 0) {
+            hashBest = state.hash;
+            scoreBest = state.nWorkScore;
+        }
+    }
+    if (hashBest == uint256())
+        return false;
+
+    // Does the selected withdrawal have sufficient work score?
+    if (scoreBest < SIDECHAIN_WITHDRAWAL_MIN_WORKSCORE)
+        return false;
+
+    // Copy outputs from withdrawal tx
+    std::vector<std::pair<uint8_t, CMutableTransaction>> vTx = scdb.GetWithdrawalTxCache();
+    for (const std::pair<uint8_t, CMutableTransaction>& pair : vTx) {
+        if (pair.second.GetHash() == hashBest) {
+            for (const CTxOut& out : pair.second.vout)
+                mtx.vout.push_back(out);
+            break;
+        }
+    }
+    // Withdrawal should have at least the encoded dest output, encoded fee output,
+    // and change return output.
+    if (mtx.vout.size() < 3)
+        return false;
+
+    // Get the mainchain fee amount from the second Withdrawal output which encodes the
+    // sum of withdrawal fees.
+    CAmount amountRead = 0;
+    if (!DecodeWithdrawalFees(mtx.vout[1].scriptPubKey, amountRead)) {
+        LogPrintf("%s: Failed to decode withdrawal fees!\n", __func__);
+        return false;
+    }
+    nFees = amountRead;
+
+    // Calculate the amount to be withdrawn by Withdrawal
+    CAmount amountWithdrawn = CAmount(0);
+    for (const CTxOut& out : mtx.vout) {
+        uint8_t nSidechain;
+        if (!out.scriptPubKey.IsDrivechain(nSidechain))
+            amountWithdrawn += out.nValue;
+    }
+
+    // Add mainchain fees from withdrawal
+    amountWithdrawn += nFees;
+
+    // Get sidechain change return script. We will pay the sidechain the change
+    // left over from this Withdrawal. This Withdrawal transaction will look like a normal
+    // sidechain deposit but with more outputs and the destination string will
+    // be SIDECHAIN_WITHDRAWAL_RETURN_DEST.
+    CScript sidechainScript;
+    if (!scdb.GetSidechainScript(nSidechain, sidechainScript))
+        return false;
+
+    // Note: Withdrawal change return must be the final output
+    // Add placeholder change return as the final output.
+    mtx.vout.push_back(CTxOut(0, sidechainScript));
+
+    // Get sidechain's CTIP
+    SidechainCTIP ctip;
+    if (!scdb.GetCTIP(nSidechain, ctip))
+        return false;
+
+    mtx.vin.push_back(CTxIn(ctip.out));
+
+    LogPrintf("%s: Withdrawal will spend CTIP: %s : %u.\n", __func__,
+            ctip.out.hash.ToString(), ctip.out.n);
+
+    // Start calculating amount returning to sidechain
+    CAmount returnAmount = ctip.amount;
+    mtx.vout.back().nValue += returnAmount;
+
+    // Subtract payout amount from sidechain change return
+    mtx.vout.back().nValue -= amountWithdrawn;
+
+    if (mtx.vout.back().nValue < 0)
+        return false;
+    if (!mtx.vin.size())
+        return false;
+
+    // Check to make sure that all of the outputs in this Withdrawal are unknown / new
+    for (size_t o = 0; o < mtx.vout.size(); o++) {
+        if (pcoinsTip->HaveCoin(COutPoint(mtx.GetHash(), o))) {
+            return false;
+        }
+    }
+#endif
+
+    tx = mtx;
+
+    return true;
+}
+
 
 void BlockAssembler::onlyUnconfirmed(CTxMemPool::setEntries& testSet)
 {

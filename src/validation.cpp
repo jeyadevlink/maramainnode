@@ -56,8 +56,6 @@
 #include <util/translation.h>
 #include <validationinterface.h>
 #include <warnings.h>
-#include <sidechain.h>
-#include <sidechaindb.h>
 
 #include <algorithm>
 #include <cassert>
@@ -690,9 +688,29 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     if (tx.IsCoinBase())
         return state.Invalid(TxValidationResult::TX_CONSENSUS, "coinbase");
 
+    // Reject critical data / Drivechain BMM transactions before Drivechains are activated (override with -prematuredrivechains)
+    bool fCriticalData = !tx.criticalData.IsNull();
+    bool drivechainsEnabled = IsDrivechainEnabled(chainActive.Tip(), chainparams.GetConsensus());
+    if (!gArgs.GetBoolArg("-prematuredrivechains", false) && fCriticalData && !drivechainsEnabled) {
+        return state.DoS(0, false, TxValidationResult::TX_NOT_STANDARD, "no-drivechains-yet", true);
+    }
+
+        // Reject BMM requests with invalid prevBytes
+    if (drivechainsEnabled && fCriticalData) {
+        uint8_t nSidechain;
+        std::string strPrevBlock = "";
+        if (tx.criticalData.IsBMMRequest(nSidechain, strPrevBlock)) {
+            std::string strTip = chainActive.Tip()->GetBlockHash().ToString();
+            strTip = strTip.substr(strTip.size() - 8, strTip.size() - 1);
+            if (strPrevBlock != strTip)
+                return state.Invalid(TxValidationResult::TX_NOT_STANDARD,  "bmm-invalid-prev-bytes");
+        }
+    }
+
+
     // Rather not work on nonstandard transactions (unless -testnet/-regtest)
     std::string reason;
-    if (m_pool.m_require_standard && !IsStandardTx(tx, m_pool.m_max_datacarrier_bytes, m_pool.m_permit_bare_multisig, m_pool.m_dust_relay_feerate, reason)) {
+    if (m_pool.m_require_standard && !IsStandardTx(tx, m_pool.m_max_datacarrier_bytes, m_pool.m_permit_bare_multisig, m_pool.m_dust_relay_feerate, reason, drivechainsEnabled)) {
         return state.Invalid(TxValidationResult::TX_NOT_STANDARD, reason);
     }
 
@@ -715,6 +733,122 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
         // wtxid) already exists in the mempool.
         return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-same-nonwitness-data-in-mempool");
     }
+
+    // Sidechain deposit / withdraw checks
+    bool fCTIPUpdated = false;
+    std::map<uint8_t, SidechainCTIP> mapCTIPCopy;
+    mapCTIPCopy = m_mempool.mapLastSidechainDeposit;
+    bool fBurnFound = false;
+    uint8_t nSidechain;
+    if (drivechainsEnabled)
+    {
+        // Get values to and from sidechain
+        CCoinsViewMemPool poolCoins(m_active_chainstate.CoinsTip(), m_pool);
+        CAmount amountSidechainIn = CAmount(0);
+        CAmount amountIn = CAmount(0);
+        CAmount amountSidechainOut = CAmount(0);
+        CAmount amountWithdrawn = CAmount(0);
+        std::string strFail = "";
+        if (!GetDrivechainAmounts(poolCoins, tx, amountSidechainIn, amountIn,
+                    amountSidechainOut, amountWithdrawn, strFail)) {
+            return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "get-drivechain-amounts: " + strFail);
+        }
+
+        if (amountSidechainIn > amountSidechainOut) {
+            // M6 Withdrawal
+
+            // Block sidechain withdrawals (Withdrawal(s)) from the memory pool.
+            // When a Withdrawal has sufficient workscore it can be added to a block
+            // by miners. Workscore is verified when the block is connected.
+             return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD,  "sidechain-withdraw-loose");
+        } else if (amountSidechainOut > amountSidechainIn) {
+            // M5 Deposit
+
+            // Find deposit burn output & OP_RETURN output with destination.
+            // Note that the first OP_RETURN output in a deposit txn will always
+            // be taken as the destination and others should be ignored.
+            COutPoint outpoint;
+            bool fDestOutput = false;
+            for (size_t i = 0; i < tx.vout.size(); i++) {
+                const CScript &scriptPubKey = tx.vout[i].scriptPubKey;
+                if (!scriptPubKey.size())
+                    continue;
+
+                if (scriptPubKey.IsDrivechain(nSidechain)) {
+                    if (fBurnFound) {
+                        // If we already found the burn output, finding another
+                        // makes the transaction invalid
+                        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD,  "sidechain-deposit-invalid-multiple-burn-outputs");
+                    }
+
+                    // We found the deposit burn output
+                    fBurnFound = true;
+
+                    // Copy output index of deposit and move on
+                    outpoint.n = i;
+                    outpoint.hash = tx.GetHash();
+
+                    continue;
+                }
+
+                if (!fDestOutput && scriptPubKey.front() == OP_RETURN) {
+                    if (scriptPubKey.size() < 3)
+                        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-dest-op-return-too-short");
+
+                    if (scriptPubKey.size() > MAX_DEPOSIT_DESTINATION_BYTES)
+                        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-dest-op-return-too-large");
+
+                    CScript::const_iterator pDest = scriptPubKey.begin() + 1;
+                    opcodetype opcode;
+                    std::vector<unsigned char> vch;
+                    if (!scriptPubKey.GetOp(pDest, opcode, vch) || vch.empty())
+                        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-dest-getop-failed");
+
+                    std::string strDest((const char*)vch.data(), vch.size());
+                    if (strDest == SIDECHAIN_WITHDRAWAL_RETURN_DEST)
+                        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-dest-sidechain-withdrawal-return-dest");
+
+                    fDestOutput = true;
+                }
+            }
+
+            if (!fBurnFound)
+                return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-no-sidechain-output");
+
+            if (!fDestOutput)
+                return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-no-destination-opreturn-output");
+
+            // Check nSidechain
+            if (!scdb.IsSidechainActive(nSidechain))
+                return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-sidechain-number");
+
+            // Check that CTIP input was spent if there is one
+            auto it = m_mempool.mapLastSidechainDeposit.find(nSidechain);
+            if (it != m_mempool.mapLastSidechainDeposit.end()) {
+                int nCTIPSpent = 0;
+                const COutPoint out = it->second.out;
+                for (const CTxIn& in : tx.vin) {
+                    if (in.prevout == out)
+                        nCTIPSpent++;
+                }
+                if (nCTIPSpent != 1) {
+                    LogPrintf("%s: Reject sidechain deposit - invalid CTIP spend!\n", __func__);
+                    return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-deposit-invalid-ctip-unspent");
+                }
+            }
+
+            // Track new sidechain CTIP - but don't actually update the mempool
+            // until all other checks have passed.
+            SidechainCTIP ctip;
+            ctip.out = outpoint;
+            ctip.amount = amountSidechainOut;
+            mapCTIPCopy[nSidechain] = ctip;
+            fCTIPUpdated = true;
+        } else if (amountSidechainIn > 0) {
+            return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "sidechain-invalid-ctip-spend");
+        }
+    }
+
 
     // Check for conflicts with in-memory transactions
     for (const CTxIn &txin : tx.vin)
@@ -4841,6 +4975,10 @@ Chainstate& ChainstateManager::InitializeChainstate(CTxMemPool* mempool)
 
     m_ibd_chainstate = std::make_unique<Chainstate>(mempool, m_blockman, *this);
     m_active_chainstate = m_ibd_chainstate.get();
+    chainActive = &m_active_chainstate;
+
+    chainActive = m_active_chainstate.m_chain;
+
     return *m_active_chainstate;
 }
 
@@ -4992,6 +5130,7 @@ bool ChainstateManager::ActivateSnapshot(
         assert(chaintip_loaded);
 
         m_active_chainstate = m_snapshot_chainstate.get();
+        chainActive = m_active_chainstate.m_chain;
 
         LogPrintf("[snapshot] successfully activated snapshot %s\n", base_blockhash.ToString());
         LogPrintf("[snapshot] (%.2f MB)\n",
@@ -5259,6 +5398,7 @@ void ChainstateManager::ResetChainstates()
     m_ibd_chainstate.reset();
     m_snapshot_chainstate.reset();
     m_active_chainstate = nullptr;
+    chainActive = nullptr;
 }
 
 /**
@@ -5314,6 +5454,7 @@ Chainstate& ChainstateManager::ActivateExistingSnapshot(CTxMemPool* mempool, uin
         std::make_unique<Chainstate>(mempool, m_blockman, *this, base_blockhash);
     LogPrintf("[snapshot] switching active chainstate to %s\n", m_snapshot_chainstate->ToString());
     m_active_chainstate = m_snapshot_chainstate.get();
+    chainActive = m_active_chainstate.m_chain;
     return *m_snapshot_chainstate;
 }
 

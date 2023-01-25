@@ -31,6 +31,8 @@
 #include <util/hasher.h>
 #include <util/translation.h>
 #include <versionbits.h>
+#include <sidechain.h>
+#include <sidechaindb.h>
 
 #include <atomic>
 #include <map>
@@ -758,6 +760,8 @@ private:
 
     friend ChainstateManager;
 };
+
+CChain chainActive;
 
 /**
  * Provides an interface for creating and interacting with one or two

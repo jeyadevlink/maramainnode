@@ -60,6 +60,7 @@ enum class TxoutType {
     WITNESS_V0_KEYHASH,
     WITNESS_V1_TAPROOT,
     WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
+    TX_DRIVECHAIN, //!< Drivechain BIP 300 sidechain escrow
 };
 
 class CNoDestination {
